@@ -20,7 +20,7 @@
 #define FAIL_LIM 100			// # of failed polls before a server advances its pipeline
 #define ZIPF 0					// Use ZIPF distributed workload
 #define KEY_SIZE 2				// In long long units
-#define VALUE_SIZE 32			// In char units
+#define VALUE_SIZE 496			// In char units
 #define SLOTS_PER_BKT 8			// Number of <tag, pointer> pairs in a MICA-style index bkt
 
 #define PUT_PERCENT 5			// Percentage of PUT operations
@@ -39,7 +39,7 @@
 #endif
 
 #define NUM_CLIENTS 36			// Number of client processes
-#define NUM_SERVERS 7			// Number of server processes
+#define NUM_SERVERS 10			// Number of server processes
 
 #define Q_DEPTH 1024			// Size of all created queues
 #define S_DEPTH 512
@@ -224,7 +224,7 @@ void print_ud_kv_array(struct UD_KV *ud_kv, int size);
 void print_ht_index();
 
 void nano_sleep(int ns);
-inline long long get_cycles();
+long long get_cycles();
 
 void poll_conn_cq(int num_completions, struct ctrl_blk *cb, int cq_num);
 void poll_dgram_cq(int num_completions, struct ctrl_blk *cb, int cq_num);
@@ -234,7 +234,7 @@ int valcheck(volatile char *val, long long exp);
 long long* gen_key_corpus(int cn);
 void init_ht(struct ctrl_blk *cb);
 int is_roce(void);
-inline uint32_t fastrand(uint64_t* seed);
+uint32_t fastrand(uint64_t* seed);
 
 #define LL long long
 #define KEY_TO_BUCKET(k) ((int) (k >> 16) & NUM_IDX_BKTS_)		// 3 bytes (up to 16 Mi buckets)

@@ -5,7 +5,7 @@ export APT=1
 
 if [ $APT -eq 1 ]
 then
-	for i in `seq 2 110`; do
+	for i in `seq 2 4`; do
 		ssh -oStrictHostKeyChecking=no node-$i.RDMA.fawn.apt.emulab.net "cd HERD; ./local-kill.sh" &
 	done
 else 

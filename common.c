@@ -83,7 +83,7 @@ void create_qp(struct ctrl_blk *ctx)
 				.max_recv_wr  = 1,
 				.max_send_sge = 1,
 				.max_recv_sge = 1,
-				.max_inline_data = S_KV < 256 ? S_KV : 256
+				.max_inline_data = S_KV < 512 ? S_KV : 512
 			},
 			.qp_type = USE_UC ? IBV_QPT_UC : IBV_QPT_RC
 		};
@@ -108,7 +108,7 @@ void create_qp(struct ctrl_blk *ctx)
 				.max_recv_wr  = Q_DEPTH,
 				.max_send_sge = 1,
 				.max_recv_sge = 1,
-				.max_inline_data = S_KV < 256 ? S_KV : 256
+				.max_inline_data = S_KV < 512 ? S_KV : 512
 			},
 		.qp_type = IBV_QPT_UD
 		};

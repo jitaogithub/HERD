@@ -32,6 +32,7 @@ void process_pipeline(struct ctrl_blk *cb)
 		int ind = (pipeline_index - k) & 1;
 		int req_type = pipeline[ind].req_type;
 
+		// printf("pipeline %d has request type %d", k, req_type);
 		if(req_type == DUMMY_TYPE || req_type == EMPTY_TYPE) {
 			if(k == 2) {		// Output the dummy pipeline item
 				pipeline_out = &pipeline[ind];
@@ -188,13 +189,17 @@ void run_server(struct ctrl_blk *cb)
 			if((char) server_req_area[req_ind].key[KEY_SIZE - 1] == 0) {
 				failed_polls ++;
 				if(failed_polls < FAIL_LIM) {
+					// printf("Server %d failed to poll!!!\n", cb->id);
 					continue;
 				}
-			}
+			} 
+			// else {
+			// 	printf("Server %d polled request!!!\n", cb->id);
+			// }
 
 			// Issue prefetches before computation
 			if(failed_polls < FAIL_LIM) {
-				int key_bkt_num = KEY_TO_BUCKET(server_req_area[req_ind].key[0]);
+				int key_bkt_num = KEY_TO_BUCKET(server_req_area[req_ind].key[0]); 	
 				
 				// We only get here if we find a new valid request. Therefore,
 				// it's OK to use the len field to determine request type
@@ -207,12 +212,15 @@ void run_server(struct ctrl_blk *cb)
 
 			// Move stuff forward in the pipeline
 			process_pipeline(cb);
+			// printf("Request %d for client %d moved through the pipeline\n", req_ind, i);
 
 			// Process the pipeline's output. pipeline_out is a pointer to a
 			// pipeline slot. The new request will get pushed into this slot.
 			// Process the output *before* pushing the new request in.
 
 			// Is the output legit?
+			// printf("Client %d request %d: pipeline_out->req_type = %d\n", i, req_lo[i] + req_num[i], pipeline_out->req_type);
+
 			if(pipeline_out->req_type != DUMMY_TYPE && pipeline_out->req_type != EMPTY_TYPE) {	
 				int cn = pipeline_out->cn & 0xff;
 				int ras = pipeline_out->req_area_slot;
@@ -242,6 +250,10 @@ void run_server(struct ctrl_blk *cb)
 				CPE(ret, "ibv_post_send error", ret);
 				
 				num_resp++;
+
+				// if (num_resp % K_128 == 0) {
+				// 	printf("Completed %d resps\n", num_resp);
+				// }
 			}
 
 			// Add a new request (legit/dummy) into the pipeline
@@ -251,8 +263,10 @@ void run_server(struct ctrl_blk *cb)
 			if(failed_polls < FAIL_LIM) {
 				if(server_req_area[req_ind].len == 0) {
 					pipeline[pipeline_index].req_type = GET_TYPE;
+					// printf("Get request pipelined\n");
 				} else {
 					pipeline[pipeline_index].req_type = PUT_TYPE;
+					// printf("Put request pipelined\n");
 				}
 
 				pipeline[pipeline_index].kv = (struct KV *) &server_req_area[req_ind];
@@ -272,6 +286,7 @@ void run_server(struct ctrl_blk *cb)
 
 				req_num[i] ++;
 			} else {
+				// printf("Got dummy type!!!\n");
 				pipeline[pipeline_index].req_type = DUMMY_TYPE;
 				failed_polls = 0;
 			}
@@ -445,6 +460,8 @@ void run_client(struct ctrl_blk *cb)
 				if(wait_cycles % M_128 == 0) {
 					fprintf(stderr, "Wait for iter %d at client %d GET = %lld\n", 
 						num_resp + 1, cb->id, pndng_keys[rws]);
+					// not receiving response for too long 
+					// poll_conn_cq(1, cb, 0);
 				}
 				recv_comps = ibv_poll_cq(cb->dgram_cq[rsn], 1, wc);
 			}
@@ -511,11 +528,12 @@ int main(int argc, char *argv[])
 	struct ctrl_blk *ctx;
 
 	srand48(getpid() * time(NULL));		// Required for PSN
-	ctx = malloc(sizeof(struct ctrl_blk));
+	ctx = calloc(1, sizeof(struct ctrl_blk));
 	
 	ctx->id = atoi(argv[1]);
 
 	// Allocate space for queue-pair attributes
+	printf("argc = %d\n", argc);
 	if (argc == 2) {
 		ctx->is_client = 1;
 		ctx->num_conn_qps = NUM_SERVERS;
@@ -541,11 +559,28 @@ int main(int argc, char *argv[])
 	}
 	
 	// Get an InfiniBand/RoCE device
-	dev_list = ibv_get_device_list(NULL);
+	int num_dev;
+	dev_list = ibv_get_device_list(&num_dev);
 	CPE(!dev_list, "Failed to get IB devices list", 0);
 
-	ib_dev = dev_list[is_roce() == 1 ? 1 : 0];
-	CPE(!ib_dev, "IB device not found", 0);
+	int dev_id = 0;
+	char * tgt_dev_name = getenv("IBDEV_NAME");
+	if (tgt_dev_name != NULL) {	
+		for (int i=0; i<num_dev; i++) {
+			if (!strcmp(tgt_dev_name, dev_list[i]->name)) {
+				dev_id = i;
+				printf("Device %i: name %s dev_name %s toggled\n", i, dev_list[i]->name, dev_list[i]->dev_name);
+				goto dev_matched;
+			}
+		} 
+		fprintf(stderr, "Supplied IB device %s not found\n", tgt_dev_name);
+	} else {
+		printf("No device specified: Device 0: name %s dev_name %s toggled\n", dev_list[0]->name, dev_list[0]->dev_name);
+	}
+dev_matched:
+	ib_dev = dev_list[dev_id];
+
+	CPE(!ib_dev, "IB device struct not retrieved", 0);
 
 	// Create queue pairs and modify them to INIT
 	init_ctx(ctx, ib_dev);
