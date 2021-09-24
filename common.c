@@ -159,55 +159,55 @@ int setup_buffers(struct ctrl_blk *cb)
 				IBV_ACCESS_REMOTE_WRITE;
 	if (cb->is_client) {
 		// Create and register the response region for a client
-		client_resp_area = (struct UD_KV *) memalign(4096, RESP_AC * S_UD_KV);
-		client_resp_area_mr = ibv_reg_mr(cb->pd, 
-			(char *)client_resp_area, RESP_AC * S_UD_KV, FLAGS);
-		CPE(!client_resp_area_mr, "client_req reg_mr failed", errno);
+		cb->client_resp_area = (struct UD_KV *) memalign(4096, cb->entity->num_remote_hosts * WINDOW_SIZE * S_UD_KV);
+		cb->client_resp_area_mr = ibv_reg_mr(cb->pd, 
+			(char *)cb->client_resp_area, cb->entity->num_remote_hosts * WINDOW_SIZE * S_UD_KV, FLAGS);
+		CPE(!cb->client_resp_area_mr, "client_req reg_mr failed", errno);
 
 		// Register the client's request to allow non-inlined requests
-		client_req_area = (struct KV *) memalign(4096, WINDOW_SIZE * S_KV);
-		client_req_area_mr = ibv_reg_mr(cb->pd, 
-			(char *) client_req_area, WINDOW_SIZE * S_KV, FLAGS);
+		cb->client_req_area = (struct KV *) memalign(4096, WINDOW_SIZE * S_KV);
+		cb->client_req_area_mr = ibv_reg_mr(cb->pd, 
+			(char *) cb->client_req_area, WINDOW_SIZE * S_KV, FLAGS);
 			
 		cb->wr.opcode = IBV_WR_RDMA_WRITE;
-		cb->sgl.lkey = client_req_area_mr->lkey;
+		cb->sgl.lkey = cb->client_req_area_mr->lkey;
 		
 	} else {
-		if(REQ_AC * S_KV > M_2) {
+		if(cb->entity->num_remote_hosts * WINDOW_SIZE * cb->entity->num_local_procs * S_KV > M_2) {
 			fprintf(stderr, "Request area larger than 1 hugepage. Exiting.\n");
 			exit(-1);
 		}
 
 		if(cb->id == 0) {
 			// Create and register master server's request region
-			int sid = shmget(REQ_AREA_SHM_KEY, M_2, IPC_CREAT | 0666 | SHM_HUGETLB);
+			int sid = shmget(REQ_AREA_SHM_KEY + 2 * cb->eid, M_2, IPC_CREAT | 0666 | SHM_HUGETLB);
 			CPE(sid < 0, "Master server request area shmget() failed\n", sid);
 
-			server_req_area = shmat(sid, 0, 0);
-			memset((char *) server_req_area, 0, M_2);
-			server_req_area_mr = ibv_reg_mr(cb->pd, (char *)server_req_area, M_2, FLAGS);
-			CPE(!server_req_area_mr, "Failed to register server's request area", errno);
+			cb->server_req_area = shmat(sid, 0, 0);
+			memset((char *) cb->server_req_area, 0, M_2);
+			cb->server_req_area_mr = ibv_reg_mr(cb->pd, (char *)cb->server_req_area, M_2, FLAGS);
+			CPE(!cb->server_req_area_mr, "Failed to register server's request area", errno);
 
 			// Create and register master server's response region
-			sid = shmget(RESP_AREA_SHM_KEY, M_2, IPC_CREAT | 0666 | SHM_HUGETLB);
+			sid = shmget(RESP_AREA_SHM_KEY + 2 * cb->eid, M_2, IPC_CREAT | 0666 | SHM_HUGETLB);
 			CPE(sid < 0, "Master server response area shmget() failed\n", sid);
-			server_resp_area = shmat(sid, 0, 0);
-			memset((char *) server_resp_area, 0, M_2);
-			server_resp_area_mr = ibv_reg_mr(cb->pd, (char *)server_resp_area, M_2, FLAGS);
-			CPE(!server_resp_area_mr, "Failed to register server's response area", errno);
+			cb->server_resp_area = shmat(sid, 0, 0);
+			memset((char *) cb->server_resp_area, 0, M_2);
+			cb->server_resp_area_mr = ibv_reg_mr(cb->pd, (char *)cb->server_resp_area, M_2, FLAGS);
+			CPE(!cb->server_resp_area_mr, "Failed to register server's response area", errno);
 		} else {
 			// For a slave server, map and register the regions created by the master
-			int sid = shmget(REQ_AREA_SHM_KEY, REQ_AC * S_KV, SHM_HUGETLB | 0666);
-			server_req_area = shmat(sid, 0, 0);
-			server_req_area_mr = ibv_reg_mr(cb->pd, (char *) server_req_area, M_2, FLAGS);
+			int sid = shmget(REQ_AREA_SHM_KEY + 2 * cb->eid, cb->entity->num_remote_hosts * WINDOW_SIZE * cb->entity->num_local_procs * S_KV, SHM_HUGETLB | 0666);
+			cb->server_req_area = shmat(sid, 0, 0);
+			cb->server_req_area_mr = ibv_reg_mr(cb->pd, (char *) cb->server_req_area, M_2, FLAGS);
 
-			sid = shmget(RESP_AREA_SHM_KEY, REQ_AC * S_KV, SHM_HUGETLB | 0666);
-			server_resp_area = shmat(sid, 0, 0);
-			server_resp_area_mr = ibv_reg_mr(cb->pd, (char *) server_resp_area, M_2, FLAGS);
+			sid = shmget(RESP_AREA_SHM_KEY + 2 * cb->eid, cb->entity->num_remote_hosts * WINDOW_SIZE * cb->entity->num_local_procs * S_KV, SHM_HUGETLB | 0666);
+			cb->server_resp_area = shmat(sid, 0, 0);
+			cb->server_resp_area_mr = ibv_reg_mr(cb->pd, (char *) cb->server_resp_area, M_2, FLAGS);
 		}
 
 		cb->wr.opcode = IBV_WR_SEND;
-		cb->sgl.lkey = server_resp_area_mr->lkey;
+		cb->sgl.lkey = cb->server_resp_area_mr->lkey;
 	}
 
 	cb->wr.sg_list = &cb->sgl;
@@ -350,17 +350,17 @@ int valcheck(volatile char *val, LL exp)
 	return ok;		// TRUE
 }
 
-void print_ht_index()
+void print_ht_index(struct ctrl_blk * cb)
 {
 	int bkt_i, slot_i;
 	for(bkt_i = 0; bkt_i < NUM_IDX_BKTS; bkt_i ++) {
 		for(slot_i = 0; slot_i < 8; slot_i ++) {
-			LL offset = SLOT_TO_OFFSET(ht_index[bkt_i].slot[slot_i]);
+			LL offset = SLOT_TO_OFFSET(cb->ht_index[bkt_i].slot[slot_i]);
 			if(offset < 0) {
 				offset = -1;
 			}
 			fprintf(stdout, "%d|%lld\t", 
-				SLOT_TO_TAG(ht_index[bkt_i].slot[slot_i]), offset);
+				SLOT_TO_TAG(cb->ht_index[bkt_i].slot[slot_i]), offset);
 		}
 		fprintf(stdout, "\n");
 	}
@@ -408,7 +408,7 @@ void init_ht(struct ctrl_blk *cb)
 	if(USE_HUGEPAGE) {
 		shm_flags |= SHM_HUGETLB;
 	}
-	int ht_index_sid = shmget(BASE_HT_INDEX_SHM_KEY + cb->id, 
+	int ht_index_sid = shmget((cb->eid+1)*10000 + BASE_HT_INDEX_SHM_KEY + cb->id, 
 		NUM_IDX_BKTS * S_IDX_BKT, shm_flags);
 	if(ht_index_sid == -1) {
 		fprintf(stderr, "shmget Error! Failed to create index\n");
@@ -416,22 +416,22 @@ void init_ht(struct ctrl_blk *cb)
 		exit(0);
 	}
 	
-	ht_index = (struct IDX_BKT *) shmat(ht_index_sid, 0, 0);
+	cb->ht_index = (struct IDX_BKT *) shmat(ht_index_sid, 0, 0);
 	for(bkt_i = 0; bkt_i < NUM_IDX_BKTS; bkt_i ++) {
 		for(slot_i = 0; slot_i < SLOTS_PER_BKT; slot_i ++) {
-			ht_index[bkt_i].slot[slot_i] = INVALID_SLOT;
+			cb->ht_index[bkt_i].slot[slot_i] = INVALID_SLOT;
 		}		
 	}
 
-	int ht_log_sid = shmget(BASE_HT_LOG_SHM_KEY + cb->id,
+	int ht_log_sid = shmget((cb->eid+1)*10000 + BASE_HT_LOG_SHM_KEY + cb->id,
 		LOG_SIZE, shm_flags);
 	if(ht_log_sid == -1) {
 		fprintf(stderr, "shmget Error! Failed to create circular log\n");
 		system("cat /sys/devices/system/node/*/meminfo | grep Huge");
 		exit(0);
 	}	
-	ht_log = shmat(ht_log_sid, 0, 0);
-	memset(ht_log, 0, LOG_SIZE);
+	cb->ht_log = shmat(ht_log_sid, 0, 0);
+	memset(cb->ht_log, 0, LOG_SIZE);
 }
 
 int is_roce(void)

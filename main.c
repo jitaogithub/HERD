@@ -631,14 +631,14 @@ dev_matched:
 			fprintf(stderr, "Server %d: create_ah for client %d\n", ctx->id, i);
 			print_qp_attr(ctx->remote_dgram_qp_attrs[i]);
 			struct ibv_ah_attr ah_attr = {
-				.is_global		= (is_roce() == 1) ? 1 : 0,
-				.dlid			= (is_roce() == 1) ? 0 : ctx->remote_dgram_qp_attrs[i].lid,
+				.is_global		= 1, //(is_roce() == 1) ? 1 : 0,
+				.dlid			= 0, //(is_roce() == 1) ? 0 : ctx->remote_dgram_qp_attrs[i].lid,
 				.sl				= 0,
 				.src_path_bits	= 0,
 				.port_num		= IB_PHYS_PORT
 			};
 
-			if(is_roce()) {
+			// if(is_roce()) {
 				ah_attr.grh.dgid.global.interface_id = 
 					ctx->remote_dgram_qp_attrs[i].gid_global_interface_id;
 				ah_attr.grh.dgid.global.subnet_prefix = 
@@ -646,7 +646,7 @@ dev_matched:
 			
 				ah_attr.grh.sgid_index = 0;
 				ah_attr.grh.hop_limit = 1;
-			}
+			// }
 
 			ctx->ah[i] = ibv_create_ah(ctx->pd, &ah_attr);
 			CPE(!ctx->ah[i], "Failed to create ah", i);

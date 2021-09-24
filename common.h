@@ -38,8 +38,8 @@
 	#define MY_SEND_INLINE IBV_SEND_INLINE
 #endif
 
-#define NUM_CLIENTS 36			// Number of client processes
-#define NUM_SERVERS 10			// Number of server processes
+// #define NUM_CLIENTS 2			// Number of client processes
+// #define NUM_SERVERS 2			// Number of server processes
 
 #define Q_DEPTH 1024			// Size of all created queues
 #define S_DEPTH 512
@@ -61,8 +61,8 @@
 
 #define NUM_ITER 1000000000		// Total number of iterations performed by a client
 
-#define REQ_AC (NUM_CLIENTS * WINDOW_SIZE * NUM_SERVERS)
-#define RESP_AC (WINDOW_SIZE * NUM_SERVERS)
+// #define REQ_AC (NUM_CLIENTS * WINDOW_SIZE * NUM_SERVERS)
+// #define RESP_AC (WINDOW_SIZE * NUM_SERVERS)
 
 // SHM keys for servers. The request and response area is shared among server processes
 // and needs a single key. For lossy index and circular log, each server uses a separate
@@ -129,7 +129,6 @@ struct PL_IT {
 	long long poll_val;
 };
 #define S_PL_IT sizeof(struct PL_IT)
-struct PL_IT pipeline[2];		// The pipeline
 
 struct IDX_BKT {		// An index bucket
 	long long slot[SLOTS_PER_BKT];
@@ -152,6 +151,36 @@ struct qp_attr {
 };
 #define S_QPA sizeof(struct qp_attr)
 
+struct stag {								// An "stag" identifying an RDMA region
+	uint64_t buf;
+	uint32_t rkey;
+	uint32_t size;
+};
+#define S_STG sizeof(struct stag)
+
+// ================ BEGIN: entity-level isolation data structures ================
+#define hrd_pid_t pthread_t
+
+struct remote_host {
+  char ip[20];
+  uint16_t port;
+	float weight;
+
+	int num_flows; // usually should be 1
+};
+
+struct hrd_entity {
+	int id;
+
+	int num_local_procs;
+	hrd_pid_t * pids;
+	uint16_t * local_ports;
+
+	int num_remote_hosts;
+	struct remote_host * remote_hosts;
+};
+// ================ BEGIN: entity-level isolation data structures ================
+
 struct ctrl_blk {
 	struct ibv_context *context;
 	struct ibv_pd *pd;
@@ -162,7 +191,7 @@ struct ctrl_blk {
 	struct ibv_cq **dgram_cq;
 	struct ibv_qp **dgram_qp;
 
-	struct ibv_ah *ah[NUM_CLIENTS];			// Per client address handles
+	struct ibv_ah **ah;			// Per client address handles
 	
 	struct qp_attr *local_dgram_qp_attrs;	// Local and remote queue pair attributes
 	struct qp_attr *remote_dgram_qp_attrs;
@@ -174,8 +203,31 @@ struct ctrl_blk {
 	struct ibv_sge sgl;
 
 	int num_conn_qps, num_remote_dgram_qps, num_local_dgram_qps;
+	int eid;								// Entity (instance ID)
+	struct hrd_entity * entity;
 	int is_client, id;
+	char server_name[20];
 	int sock_port;							// The socket port a server uses for client connections
+
+	// Request and response regions, and their RDMA memory-region descriptors
+	volatile struct KV *server_req_area;
+	volatile struct KV *server_resp_area;
+	volatile struct KV *client_req_area;
+	volatile struct UD_KV *client_resp_area;
+
+	struct ibv_mr *server_req_area_mr, *server_resp_area_mr;
+	struct ibv_mr *client_resp_area_mr, *client_req_area_mr;
+
+	struct stag *server_req_area_stag, *client_resp_area_stag;
+
+	// The lossy index and the circular log
+	struct IDX_BKT *ht_index;
+	char *ht_log;
+
+	struct PL_IT pipeline[2];		// The pipeline
+	long long log_head;
+	long long tot_pipelined;
+	struct PL_IT *pipeline_out;
 };
 
 struct stag {								// An "stag" identifying an RDMA region
@@ -185,20 +237,6 @@ struct stag {								// An "stag" identifying an RDMA region
 };
 #define S_STG sizeof(struct stag)
 
-// The lossy index and the circular log
-struct IDX_BKT *ht_index;
-char *ht_log;
-
-// Request and response regions, and their RDMA memory-region descriptors
-volatile struct KV *server_req_area;
-volatile struct KV *server_resp_area;
-volatile struct KV *client_req_area;
-volatile struct UD_KV *client_resp_area;
-
-struct ibv_mr *server_req_area_mr, *server_resp_area_mr;
-struct ibv_mr *client_resp_area_mr, *client_req_area_mr;
-
-struct stag server_req_area_stag[NUM_SERVERS], client_resp_area_stag[NUM_CLIENTS];
 
 union ibv_gid get_gid(struct ibv_context *context);
 uint16_t get_local_lid(struct ibv_context *context);
@@ -221,7 +259,7 @@ void print_stag(struct stag);
 void print_qp_attr(struct qp_attr);
 void print_kv_array(volatile struct KV *kv, int size);
 void print_ud_kv_array(struct UD_KV *ud_kv, int size);
-void print_ht_index();
+void print_ht_index(struct ctrl_blk * cb);
 
 void nano_sleep(int ns);
 long long get_cycles();

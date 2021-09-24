@@ -10,7 +10,7 @@ int modify_dgram_qp_to_rts(struct ctrl_blk *ctx)
 		};
 	
 		if (ibv_modify_qp(ctx->dgram_qp[i], &dgram_attr, IBV_QP_STATE)) {
-			fprintf(stderr, "Failed to modify dgram QP to RTR\n");
+			fprintf(stderr, "Entity %d, Process %d: Failed to modify dgram QP %d to RTR\n", ctx->eid, ctx->id, i);
 			return 1;
 		}
 	
@@ -19,7 +19,7 @@ int modify_dgram_qp_to_rts(struct ctrl_blk *ctx)
 	
 		if(ibv_modify_qp(ctx->dgram_qp[i], 
 			&dgram_attr, IBV_QP_STATE|IBV_QP_SQ_PSN)) {
-			fprintf(stderr, "Failed to modify dgram QP to RTS\n");
+			fprintf(stderr, "Entity %d, Process %d: Failed to modify dgram QP %d to RTS\n", ctx->eid, ctx->id, i);
 			return 1;
 		}
 	}
@@ -37,15 +37,15 @@ int connect_ctx(struct ctrl_blk *ctx, int my_psn, struct qp_attr dest,
 		.dest_qp_num		= dest.qpn,
 		.rq_psn				= dest.psn,
 		.ah_attr			= {
-			.is_global			= (is_roce() == 1) ? 1 : 0,
-			.dlid				= (is_roce() == 1) ? 0 : dest.lid,
+			.is_global			= 1, // (is_roce() == 1) ? 1 : 0,
+			.dlid				= 0, // (is_roce() == 1) ? 0 : dest.lid,
 			.sl					= 0,
 			.src_path_bits		= 0,
 			.port_num			= IB_PHYS_PORT
 		}
 	};
 
-	if(is_roce()) {
+	// if(is_roce()) {
 		conn_attr.ah_attr.grh.dgid.global.interface_id = 
 			dest.gid_global_interface_id;
 		conn_attr.ah_attr.grh.dgid.global.subnet_prefix = 
@@ -53,7 +53,7 @@ int connect_ctx(struct ctrl_blk *ctx, int my_psn, struct qp_attr dest,
 	
 		conn_attr.ah_attr.grh.sgid_index = 0;
 		conn_attr.ah_attr.grh.hop_limit = 1;
-	}
+	// }
 
 	int rtr_flags = IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN
 		| IBV_QP_RQ_PSN;
@@ -63,7 +63,7 @@ int connect_ctx(struct ctrl_blk *ctx, int my_psn, struct qp_attr dest,
 		rtr_flags |= IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER;
 	}
 	if (ibv_modify_qp(ctx->conn_qp[qp_i], &conn_attr, rtr_flags)) {
-		fprintf(stderr, "Failed to modify QP to RTR\n");
+		fprintf(stderr, "Entity %d, Server %d: Failed to modify QP %d to RTR\n", ctx->eid, ctx->id, qp_i);
 		return 1;
 	}
 
@@ -80,7 +80,7 @@ int connect_ctx(struct ctrl_blk *ctx, int my_psn, struct qp_attr dest,
 			  IBV_QP_MAX_QP_RD_ATOMIC;
 	}
 	if (ibv_modify_qp(ctx->conn_qp[qp_i], &conn_attr, rts_flags)) {
-		fprintf(stderr, "Failed to modify QP to RTS\n");
+		fprintf(stderr, "Entity %d, Server %d: Failed to modify QP %d to RTS\n", ctx->eid, ctx->id, qp_i);
 		return 1;
 	}
 
@@ -94,50 +94,52 @@ void client_exch_dest(struct ctrl_blk *cb)
 
 	struct sockaddr_in serv_addr;
 	struct hostent *server;
-	char server_name[20],sock_port_str[20];
+	// char server_name[20],sock_port_str[20];
 
-	for(i = 0; i < NUM_SERVERS; i++) {
+	cb->server_req_area_stag = calloc(cb->entity->num_remote_hosts, sizeof(struct stag));
+	for(i = 0; i < cb->entity->num_remote_hosts; i++) {
 		// Find the server name and port from the "servers" file
-		scanf("%s", server_name);
-		scanf("%s", sock_port_str);
-		printf("At client %d, server_name = %s, port = %s\n", cb->id, 
-			server_name, sock_port_str);
-		sock_port = atoi(sock_port_str);
+		// scanf("%s", server_name);
+		// scanf("%s", sock_port_str);
+
+		printf("Entity %d, Client %d: server_name = %s, port = %hu\n", cb->eid, cb->id, 
+			cb->entity->remote_hosts[i].ip, cb->entity->remote_hosts[i].port);
+		// sock_port = atoi(sock_port_str);
 
 		sockfd = socket(AF_INET, SOCK_STREAM, 0);
 		CPE(sockfd < 0, "Error opening socket", 0);
 	
-		server = gethostbyname(server_name);
+		server = gethostbyname(cb->entity->remote_hosts[i].ip);
 		CPE(server == NULL, "No such host", 0);
 	
 		bzero((char *) &serv_addr, sizeof(serv_addr));
 		serv_addr.sin_family = AF_INET;
 		bcopy((char *)server->h_addr, (char *)&serv_addr.sin_addr.s_addr,
 			server->h_length);
-		serv_addr.sin_port = htons(sock_port);
+		serv_addr.sin_port = htons(cb->entity->remote_hosts[i].port);
 	
 		if(connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr))) {
 			fprintf(stderr, "ERROR connecting\n");
 		}
 
 		// Get STAG
-		if(read(sockfd, &server_req_area_stag[i], S_STG) < 0) {
+		if(read(sockfd, &cb->server_req_area_stag[i], S_STG) < 0) {
 			fprintf(stderr, "ERROR reading stag from socket\n");
 		}
-		fprintf(stderr, "Client %d <-- Server %d's stag: ", cb->id, i);
-		print_stag(server_req_area_stag[i]);
+		fprintf(stderr, "Entity %d: Client %d <-- Server %d's stag: ", cb->eid, cb->id, i);
+		print_stag(cb->server_req_area_stag[i]);
 	
 		// Exchange attributes for connected QPs
 		if(write(sockfd, &cb->local_conn_qp_attrs[i], S_QPA) < 0) {
 			fprintf(stderr, "ERROR writing conn qp_attr to socket\n");
 		}
-		fprintf(stderr, "Client %d --> Server %d conn qp_attr: ", cb->id, i);
+		fprintf(stderr, "Entity %d: Client %d --> Server %d conn qp_attr: ", cb->eid, cb->id, i);
 		print_qp_attr(cb->local_conn_qp_attrs[i]);
 
 		if(read(sockfd, &cb->remote_conn_qp_attrs[i], S_QPA) < 0) {
 			fprintf(stderr, "Error reading conn qp_attr from socket");
 		}
-		fprintf(stderr, "Client %d <-- Server %d's conn qp_attr: ", cb->id, i);
+		fprintf(stderr, "Entity %d: Client %d <-- Server %d's conn qp_attr: ", cb->eid, cb->id, i);
 		print_qp_attr(cb->remote_conn_qp_attrs[i]);
 		
 		// Send datagram QP attrs. Clients don't need server's UD QP attrs
@@ -145,7 +147,7 @@ void client_exch_dest(struct ctrl_blk *cb)
 		if(write(sockfd, &cb->local_dgram_qp_attrs[i], S_QPA) < 0) {
 			fprintf(stderr, "ERROR writing dgram qp_attr to socket\n");
 		}
-		fprintf(stderr, "Client %d --> Server %d UD qp_attr: ", cb->id, i);
+		fprintf(stderr, "Entity %d: Client %d --> Server %d UD qp_attr: ", cb->eid, cb->id, i);
 		print_qp_attr(cb->local_dgram_qp_attrs[i]);
 
 		close(sockfd);
@@ -178,12 +180,13 @@ void server_exch_dest(struct ctrl_blk *cb)
 	if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
 		fprintf(stderr, "ERROR on binding");
 	}
-	printf("Server %d listening on port %d\n", cb->id, cb->sock_port);
-	listen(sockfd, NUM_CLIENTS);
+	printf("Entity %d, Server %d listening on port %d\n", cb->eid, cb->id, cb->sock_port);
+	listen(sockfd, cb->entity->num_remote_hosts);
 	
-	for(i = 0; i < NUM_CLIENTS; i++) {
+	cb->server_req_area_stag = calloc(cb->entity->num_remote_hosts, sizeof(struct stag));
+	for(i = 0; i < cb->entity->num_remote_hosts; i++) {
 
-		printf("Server %d trying to accept()\n", cb->id);
+		printf("Entity %d, Server %d trying to accept()\n", cb->eid, cb->id);
 		newsockfd = accept(sockfd, NULL, NULL);
 		if (newsockfd < 0) {
 			fprintf(stderr, "ERROR on accept");
@@ -191,22 +194,22 @@ void server_exch_dest(struct ctrl_blk *cb)
 		}
 
 		// Exchange stag information
-		server_req_area_stag[0].buf = (uint64_t) (unsigned long) 
-			server_req_area;
-		server_req_area_stag[0].rkey = server_req_area_mr->rkey;
-		server_req_area_stag[0].size = REQ_AC * S_KV;
+		cb->server_req_area_stag[0].buf = (uint64_t) (unsigned long) 
+			cb->server_req_area;
+		cb->server_req_area_stag[0].rkey = cb->server_req_area_mr->rkey;
+		cb->server_req_area_stag[0].size = cb->entity->num_remote_hosts * WINDOW_SIZE * cb->entity->num_local_procs * S_KV;
 	
-		if(write(newsockfd, &server_req_area_stag[0], S_STG) < 0) {
+		if(write(newsockfd, &cb->server_req_area_stag[0], S_STG) < 0) {
 			fprintf(stderr, "ERROR writing stag to socket\n");
 		}
-		fprintf(stderr, "Server %d --> Client %d stag: ", cb->id, i);
-		print_stag(server_req_area_stag[0]);
+		fprintf(stderr, "Entity %d, Server %d --> Client %d stag: ", cb->eid, cb->id, i);
+		print_stag(cb->server_req_area_stag[0]);
 
 		// Exchange attributes for connected QPs
 		if(read(newsockfd, &cb->remote_conn_qp_attrs[i], S_QPA) < 0) {
 			fprintf(stderr, "ERROR reading conn qp_attr from socket\n");
 		}
-		fprintf(stderr, "Server %d <-- Client %d's conn qp_attr: ", cb->id, i);
+		fprintf(stderr, "Entity %d, Server %d <-- Client %d's conn qp_attr: ", cb->eid, cb->id, i);
 		print_qp_attr(cb->remote_conn_qp_attrs[i]);
 		
 		if(connect_ctx(cb, cb->local_conn_qp_attrs[i].psn, 
@@ -218,14 +221,14 @@ void server_exch_dest(struct ctrl_blk *cb)
 		if(write(newsockfd, &cb->local_conn_qp_attrs[i], S_QPA) < 0 ) {
 			fprintf(stderr, "Error writing conn qp_attr to socket\n");
 		}
-		fprintf(stderr, "Server %d --> Client %d conn qp_attr: ", cb->id, i);
+		fprintf(stderr, "Entity %d, Server %d --> Client %d conn qp_attr: ", cb->eid, cb->id, i);
 		print_qp_attr(cb->local_conn_qp_attrs[i]);
 
 		// The server reads many clients' UD qp_attrs
 		if(read(newsockfd, &cb->remote_dgram_qp_attrs[i], S_QPA) < 0) {
 			fprintf(stderr, "ERROR reading dgram qp_attr from socket\n");
 		}
-		fprintf(stderr, "Server %d <-- Client %d's UD qp_attr: ", cb->id, i);
+		fprintf(stderr, "Entity %d, Server %d <-- Client %d's UD qp_attr: ", cb->eid, cb->id, i);
 		print_qp_attr(cb->remote_dgram_qp_attrs[i]);
 	
 		close(newsockfd);

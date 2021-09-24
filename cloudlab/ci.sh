@@ -5,7 +5,7 @@ HOSTS=`./cloudlab/nodes.sh --all`
 TARBALL=HERD.tar.gz
 PROJECT_DIRNAME=HERD
 
-tar -czf $TARBALL scripts/ YCSB/ ./*
+tar -czf $TARBALL scripts/ YCSB/ yama/ ./*
 
 for host in $HOSTS ; do
   echo "Pushing to $host ..."

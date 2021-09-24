@@ -1,0 +1,3 @@
+[submodule "yama"]
+	path = yama
+	url = git@github.com:jitaogithub/rcachemgmt.git
