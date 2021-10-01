@@ -1,3 +1,6 @@
+#ifndef COMMON_H
+#define COMMON_H
+
 #define _GNU_SOURCE
 #include <errno.h>
 #include <stdio.h>
@@ -38,8 +41,8 @@
 	#define MY_SEND_INLINE IBV_SEND_INLINE
 #endif
 
-// #define NUM_CLIENTS 2			// Number of client processes
-// #define NUM_SERVERS 2			// Number of server processes
+#define MAX_NUM_CLIENTS 256			// Number of client processes
+#define MAX_NUM_SERVERS 16			// Number of server processes
 
 #define Q_DEPTH 1024			// Size of all created queues
 #define S_DEPTH 512
@@ -189,6 +192,7 @@ struct ctrl_blk {
 	struct ibv_qp **conn_qp;
 	
 	struct ibv_cq **dgram_cq;
+	struct ibv_cq **dgram_recv_cq;
 	struct ibv_qp **dgram_qp;
 
 	struct ibv_ah **ah;			// Per client address handles
@@ -205,7 +209,7 @@ struct ctrl_blk {
 	int num_conn_qps, num_remote_dgram_qps, num_local_dgram_qps;
 	int eid;								// Entity (instance ID)
 	struct hrd_entity * entity;
-	int is_client, id;
+	int is_client, id, base_id;
 	char server_name[20];
 	int sock_port;							// The socket port a server uses for client connections
 
@@ -229,14 +233,6 @@ struct ctrl_blk {
 	long long tot_pipelined;
 	struct PL_IT *pipeline_out;
 };
-
-struct stag {								// An "stag" identifying an RDMA region
-	uint64_t buf;
-	uint32_t rkey;
-	uint32_t size;
-};
-#define S_STG sizeof(struct stag)
-
 
 union ibv_gid get_gid(struct ibv_context *context);
 uint16_t get_local_lid(struct ibv_context *context);
@@ -284,3 +280,5 @@ uint32_t fastrand(uint64_t* seed);
 
 #define SET_PL_IT_MEMCPY_DONE(pl_it) (pl_it.cn |= 0xf00)
 #define GET_PL_IT_MEMCPY_DONE(pl_it) (pl_it->cn & 0xf00)
+
+#endif

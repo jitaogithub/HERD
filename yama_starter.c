@@ -5,6 +5,7 @@
  */ 
 
 #include "bctl.h"
+#include "param.h"
 
 #include "common.h"
 
@@ -182,7 +183,7 @@ void run_server(struct ctrl_blk *cb)
 	}
 
 	for(i = 0; i < cb->entity->num_remote_hosts; i++) {
-		req_lo[i] = (cb->id * (WINDOW_SIZE * cb->entity->num_remote_hosts)) + (i * WINDOW_SIZE);
+		req_lo[i] = (cb->id * (WINDOW_SIZE * MAX_NUM_CLIENTS)) + (i * WINDOW_SIZE);
 		req_num[i] = 0;
 	}
 
@@ -194,8 +195,8 @@ void run_server(struct ctrl_blk *cb)
 				clock_gettime(CLOCK_REALTIME, &end);
 				double seconds = (end.tv_sec - start.tv_sec) +
 					(double) (end.tv_nsec - start.tv_nsec) / 1000000000;
-				fprintf(stderr, "Server %d, IOPS: %f, used fraction: %f\n", 
-					cb->id, M_1 / seconds, (double) cb->log_head / LOG_SIZE);
+				fprintf(stderr, "Entity %d Server %d, IOPS: %f, used fraction: %f\n", 
+					cb->eid, cb->id, M_1 / seconds, (double) cb->log_head / LOG_SIZE);
 				clock_gettime(CLOCK_REALTIME, &start);
 				last_resp = num_resp;
 			}
@@ -210,7 +211,7 @@ void run_server(struct ctrl_blk *cb)
 				}
 			} 
 			// else {
-				// printf("Server %d polled request!!!\n", cb->id);
+				// printf("Entity %d Server %d polled request!!!\n", cb->eid, cb->id);
 			// }
 
 			// Issue prefetches before computation
@@ -263,6 +264,7 @@ void run_server(struct ctrl_blk *cb)
 				}
 
 				ret = ibv_post_send(cb->dgram_qp[0], &cb->wr, &bad_send_wr);
+				// printf("Entity %d Server %d posted response %d !!!\n", cb->eid, cb->id, num_resp);
 				CPE(ret, "ibv_post_send error", ret);
 				
 				num_resp++;
@@ -356,7 +358,7 @@ void run_client(struct ctrl_blk *cb)
 	int * num_req_arr = calloc(cb->entity->num_remote_hosts, sizeof(int));	
 	// memset(num_req_arr, 0, NUM_SERVERS * sizeof(int));
 
-	int * num_resp_arr = malloc(cb->entity->num_remote_hosts * sizeof(int));	
+	int * num_resp_arr = calloc(cb->entity->num_remote_hosts, sizeof(int));	
 	// memset(num_resp_arr, 0, NUM_SERVERS * sizeof(int));
 
 	// The server contacted and the key used in a window slot
@@ -387,7 +389,7 @@ void run_client(struct ctrl_blk *cb)
 
 		// Performance measurement
 		if((iter & M_1_) == M_1_ && iter != 0) {
-			fprintf(stderr, "\nClient %d completed %d ops\n", cb->id, iter);
+			fprintf(stderr, "\nEntity %d Client %d completed %d ops\n", cb->eid, cb->id, iter);
 			clock_gettime(CLOCK_REALTIME, &end);
 			double seconds = (end.tv_sec - start.tv_sec) +
 				(double) (end.tv_nsec - start.tv_nsec) / 1000000000;
@@ -431,8 +433,8 @@ void run_client(struct ctrl_blk *cb)
 		sn = (int) ((req_kv->key[0] >> 40) % (cb->entity->num_remote_hosts - 1) + 1);
 		sn_arr[iter_] = sn;
 
-		int req_offset = (sn * WINDOW_SIZE * cb->entity->num_remote_hosts) + 
-			(WINDOW_SIZE * cb->id) + (num_req_arr[sn] & WINDOW_SIZE_);
+		int req_offset = (sn * WINDOW_SIZE * MAX_NUM_CLIENTS) + 
+			(WINDOW_SIZE * (cb->id + cb->base_id)) + (num_req_arr[sn] & WINDOW_SIZE_);
 
 		clock_gettime(CLOCK_REALTIME, &op_start[iter_]);
 		
@@ -460,6 +462,7 @@ void run_client(struct ctrl_blk *cb)
 		// Although each client has NUM_SERVERS conn_qps, they only issue RDMA
 		// WRITEs to the 0th server
 		ret = ibv_post_send(cb->conn_qp[0], &cb->wr, &bad_send_wr);
+		// printf("Entity %d Client %d posted request %d\n", cb->eid, cb->id, num_req);
 		CPE(ret, "ibv_post_send error", ret);
 
 		num_req_arr[sn]++;
@@ -475,12 +478,12 @@ void run_client(struct ctrl_blk *cb)
 			while(recv_comps == 0) {
 				wait_cycles ++;
 				if(wait_cycles % M_128 == 0) {
-					fprintf(stderr, "Wait for iter %d at client %d GET = %lld\n", 
-						num_resp + 1, cb->id, pndng_keys[rws]);
+					fprintf(stderr, "Wait for iter %d at entity %d client %d GET = %lld\n", 
+						num_resp + 1, cb->eid, cb->id, pndng_keys[rws]);
 					// not receiving response for too long 
 					// poll_conn_cq(1, cb, 0);
 				}
-				recv_comps = ibv_poll_cq(cb->dgram_cq[rsn], 1, wc);
+				recv_comps = ibv_poll_cq(cb->dgram_recv_cq[rsn], 1, wc);
 			}
 			if(wc[0].status != 0) {
 				fprintf(stderr, "Bad recv wc status %d\n", wc[0].status);
@@ -492,8 +495,8 @@ void run_client(struct ctrl_blk *cb)
 				if(cb->client_resp_area[ras].kv.len < GET_FAIL_LEN_1) {
 					if(!valcheck(cb->client_resp_area[ras].kv.value, 
 						pndng_keys[rws])) {
-						fprintf(stderr, "Client %d get() failed in iter %d. ", 
-							cb->id, num_resp);
+						fprintf(stderr, "Entity %d Client %d get() failed in iter %d. ", 
+							cb->eid, cb->id, num_resp);
 						print_ud_kv(cb->client_resp_area[ras]);
 						exit(0);
 					}
@@ -560,6 +563,12 @@ dev_matched:
 
 void hrd_init_ib(struct ctrl_blk * ctx) {	// Create queue pairs and modify them to INIT
 	int i;
+
+	pacer_cb->bypass = 0;
+	pacer_cb->chunk_sz = 0;
+	pacer_cb->weight = 1;
+	pacer_cb->tx_depth = Q_DEPTH;
+	pacer_cb->remote_host_id = 0;
 
 	init_ctx(ctx, ib_dev);
 	CPE(!ctx, "Init ctx failed", 0);
@@ -652,15 +661,30 @@ void * proc_work(void * arg) {
 	struct ctrl_blk * ctx = (struct ctrl_blk *) arg;
 	hrd_setup_ib(ctx);
 	
+  cpu_set_t mask;
+	if (sched_getaffinity(0, sizeof(mask), &mask) == -1) {
+		fprintf(stderr, "FATAL\tflow_work\tsched_getaffinity: %s", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+	for (int i=0; i<EXCLUDED_CPU_NUM; i++)
+		CPU_CLR(i, &mask);
+	if (sched_setaffinity(0, sizeof(mask), &mask) == -1) {
+		fprintf(stderr, "FATAL\tflow_work\tsched_setaffinity: %s\n", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+
 	if(ctx->is_client) {
 		while (!__atomic_load_n(&hrd_started, __ATOMIC_SEQ_CST));
+		printf("Entity %d Client %d starts working\n", ctx->eid, ctx->id);
 		run_client(ctx);
+		printf("Entity %d Client %d: work done, exitting\n", ctx->eid, ctx->id);
 	} else {
 		ctx->log_head = 0;
 		ctx->tot_pipelined = 0;
+		printf("Entity %d Server %d starts working\n", ctx->eid, ctx->id);
 		run_server(ctx);
+		printf("Entity %d Server %d: work done, exitting\n", ctx->eid, ctx->id);
 	}
-	printf("Entity %d, Process %d: work done, exitting\n", ctx->eid, ctx->id);
 
 	return NULL;
 }
@@ -673,7 +697,7 @@ int main(int argc, char ** argv)
   int is_dynamic_interval, is_splitting_requests;
   struct comm_rcm * rcm;
 
-  int i, j, k, is_client, num_entities, num_paced_hosts;
+  int i, j, k, is_client, base_id, num_entities, num_paced_hosts;
 	struct hrd_entity * entities;
 	struct ctrl_blk ** ctxs;
 	struct remote_host * paced_hosts;
@@ -686,13 +710,14 @@ int main(int argc, char ** argv)
   
   TEST_NZ(set_sched_batch(0));
 
-  if (argc < 5)
+  if (argc < 6)
     usage(argv[0]);
 
   is_client = atoi(argv[1]);
+	base_id = atoi(argv[2]);
 
-  is_dynamic_interval = atoi(argv[2]);
-  is_splitting_requests = atoi(argv[3]);
+  is_dynamic_interval = atoi(argv[3]);
+  is_splitting_requests = atoi(argv[4]);
   TEST_Z(rcm = comm_create_rcm());
 
   if (!is_dynamic_interval)
@@ -701,7 +726,10 @@ int main(int argc, char ** argv)
   __atomic_store_n(&pacer_enabled, is_dynamic_interval, __ATOMIC_SEQ_CST);
   __atomic_store_n(&pacer_pace, 0, __ATOMIC_SEQ_CST);
 
-  num_entities = atoi(argv[4]);
+  TEST_Z(rcm = comm_create_rcm());
+  logging_info("main", "rdma client manager (rcm) created");
+
+  num_entities = atoi(argv[5]);
   if (!num_entities)
     return 0;
 	entities = calloc(num_entities, sizeof(struct hrd_entity));
@@ -710,7 +738,7 @@ int main(int argc, char ** argv)
   // pthread_mutexattr_init(&mattr);
   // pthread_mutexattr_setpshared(&mattr, PTHREAD_PROCESS_SHARED);
 
-  k=5; //token counter
+  k=6; //token counter
   for (i=0; i<num_entities; i++) {
 		entities[i].id = i;
 
@@ -756,6 +784,7 @@ int main(int argc, char ** argv)
 				ctxs[i][j].sock_port = entities[i].local_ports[j];
 
 			ctxs[i][j].id = j;
+			ctxs[i][j].base_id = base_id;
 
 			ctxs[i][j].ah = (struct ibv_ah **) malloc(entities[i].num_remote_hosts * sizeof(struct ibv_ah *));
 

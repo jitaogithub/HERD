@@ -94,15 +94,21 @@ void create_qp(struct ctrl_blk *ctx)
 	// Create datagram queue pairs
 	ctx->dgram_qp = malloc(sizeof(int *) * ctx->num_local_dgram_qps);
 	ctx->dgram_cq = malloc(sizeof(int *) * ctx->num_local_dgram_qps);
+	ctx->dgram_recv_cq = malloc(sizeof(int *) * ctx->num_local_dgram_qps);
 
 	for(i = 0; i < ctx->num_local_dgram_qps; i++) {
 		ctx->dgram_cq[i] = ibv_create_cq(ctx->context, 
 			Q_DEPTH + 1, NULL, NULL, 0);
 		CPE(!ctx->dgram_cq[i], "Couldn't create datagram CQ", 0);
 
+		ctx->dgram_recv_cq[i] = ibv_create_cq(ctx->context, 
+			Q_DEPTH + 1, NULL, NULL, 0);
+		CPE(!ctx->dgram_recv_cq[i], "Couldn't create datagram recv CQ", 0);
+
+
 		struct ibv_qp_init_attr dgram_init_attr = {
 			.send_cq = ctx->dgram_cq[i],
-			.recv_cq = ctx->dgram_cq[i],
+			.recv_cq = ctx->dgram_recv_cq[i],
 			.cap     = {
 				.max_send_wr  = Q_DEPTH,
 				.max_recv_wr  = Q_DEPTH,
