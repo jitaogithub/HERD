@@ -7,7 +7,7 @@ i=0
 for host in $HOSTS ; do
   echo "Cleaning up $host"
   ssh -o StrictHostKeyChecking=no $host \
-    "sudo killall -SIGKILL main"
+    "sudo killall -SIGKILL main yama_starter server"
   let i=$i+1
 
   if [[ ! -z $1 ]]; then
@@ -18,4 +18,4 @@ for host in $HOSTS ; do
 done
 # kill server at last or clients will fail
 echo "Cleaning localhost"
-sudo killall -SIGKILL main
+sudo killall -SIGKILL main  yama_starter server

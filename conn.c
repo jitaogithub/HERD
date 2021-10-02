@@ -119,12 +119,12 @@ void client_exch_dest(struct ctrl_blk *cb)
 		serv_addr.sin_port = htons(cb->entity->remote_hosts[i].port);
 	
 		if(connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr))) {
-			fprintf(stderr, "ERROR connecting\n");
+			fprintf(stderr, "Entity %d Client %d ERROR connecting\n", cb->eid, cb->id);
 		}
 
 		// Get STAG
 		if(read(sockfd, &cb->server_req_area_stag[i], S_STG) < 0) {
-			fprintf(stderr, "ERROR reading stag from socket\n");
+			fprintf(stderr, "Entity %d Client %d ERROR reading stag from socket\n", cb->eid, cb->id);
 		}
 		fprintf(stderr, "Entity %d: Client %d <-- Server %d's stag: ", cb->eid, cb->id, i);
 		print_stag(cb->server_req_area_stag[i]);

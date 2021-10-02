@@ -813,13 +813,12 @@ int main(int argc, char ** argv)
 
 	for (i = 0; i < num_entities; i++) {
 		for (j = 0; j < entities[i].num_local_procs; j++) {
-			pthread_create(&entities[i].pids[j], NULL, proc_work, (void *)&ctxs[i][j]);
 			if (is_client) {
-				usleep(100000);
-			} else if (j == 0) {
-				usleep(2000000); 
-			} else {
-				usleep(500000);
+				usleep(j == 0 ? 2000000 : 100000);
+			}
+			pthread_create(&entities[i].pids[j], NULL, proc_work, (void *)&ctxs[i][j]);
+			if (!is_client) {
+				usleep(j == 0 ? 2000000 : 500000); 
 			}
 		}
 	}
